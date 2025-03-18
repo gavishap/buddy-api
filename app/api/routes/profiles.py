@@ -67,7 +67,7 @@ async def get_profile(user_id: str, request: Request):
     logger.info(f"Looking up profile for user ID: {user_id}")
     
     try:
-        # First try to find profile by user_id
+        # First try to find profile in profiles collection
         profile = await db[collections.PROFILES].find_one({"user_id": user_id})
         
         # If not found and user_id looks like an ObjectId, try with that
@@ -77,42 +77,73 @@ async def get_profile(user_id: str, request: Request):
                 user = await db[collections.USERS].find_one({"_id": ObjectId(user_id)})
                 if user:
                     actual_id = user.get("id", str(user.get("_id")))
-                    logger.info(f"Found user, looking up profile with user_id: {actual_id}")
+                    logger.info(f"Found user in legacy collection, looking up profile with user_id: {actual_id}")
                     profile = await db[collections.PROFILES].find_one({"user_id": actual_id})
             except Exception as e:
-                logger.error(f"Error finding user with ObjectId: {str(e)}")
+                logger.error(f"Error finding user with ObjectId in legacy collection: {str(e)}")
         
-        # If still no profile, use the user data as the profile
+        # If still no profile, try to get user from owner or sitter collections
         if not profile:
-            logger.info(f"No profile found, using user data as profile")
+            logger.info(f"No profile found, checking owner and sitter collections")
+            
+            # First try owner collection
+            owner = None
+            sitter = None
+            user_type = None
+            user = None
+            
             try:
-                # Try by id first
-                user = await db[collections.USERS].find_one({"id": user_id})
-                # Then try by ObjectId
-                if not user and len(user_id) == 24:
-                    try:
-                        user = await db[collections.USERS].find_one({"_id": ObjectId(user_id)})
-                    except Exception as e:
-                        logger.error(f"Error finding user with ObjectId: {str(e)}")
-                
-                if user:
-                    # Create a profile from user data
-                    profile = {
-                        "id": str(ObjectId()),  # Generate a new ID for the profile
-                        "user_id": user_id,
-                        "email": user.get("email"),
-                        "first_name": user.get("first_name") or "",
-                        "last_name": user.get("last_name") or "",
-                        "user_type": user.get("user_type", "owner"),
-                        "created_at": user.get("created_at", datetime.utcnow().isoformat()),
-                    }
-                    
-                    # Store this profile for future use
-                    result = await db[collections.PROFILES].insert_one(profile)
-                    profile["id"] = str(result.inserted_id)
-                    logger.info(f"Created new profile for user: {user_id}")
+                owner = await db[collections.OWNERS].find_one({"_id": ObjectId(user_id)})
+                if owner:
+                    user = owner
+                    user_type = "owner"
+                    logger.info(f"Found user in owner collection: {user_id}")
             except Exception as e:
-                logger.error(f"Error creating profile from user data: {str(e)}")
+                logger.error(f"Error finding user in owner collection: {str(e)}")
+                
+            # If not found in owner collection, try sitter collection
+            if not user:
+                try:
+                    sitter = await db[collections.SITTERS].find_one({"_id": ObjectId(user_id)})
+                    if sitter:
+                        user = sitter
+                        user_type = "sitter"
+                        logger.info(f"Found user in sitter collection: {user_id}")
+                except Exception as e:
+                    logger.error(f"Error finding user in sitter collection: {str(e)}")
+            
+            # If still not found, try legacy users collection by ID
+            if not user:
+                try:
+                    legacy_user = await db[collections.USERS].find_one({"id": user_id})
+                    if legacy_user:
+                        user = legacy_user
+                        user_type = user.get("user_type", "owner")
+                        logger.info(f"Found user in legacy collection by ID: {user_id}")
+                except Exception as e:
+                    logger.error(f"Error finding user in legacy collection by ID: {str(e)}")
+            
+            # If user found in any collection, create profile
+            if user:
+                # Create a profile from user data
+                profile = {
+                    "id": str(ObjectId()),  # Generate a new ID for the profile
+                    "user_id": user_id,
+                    "email": user.get("email"),
+                    "first_name": user.get("first_name") or "",
+                    "last_name": user.get("last_name") or "",
+                    "user_type": user_type or user.get("user_type", "owner"),
+                    "created_at": user.get("created_at", datetime.utcnow().isoformat()),
+                    "bio": "",
+                    "phone": user.get("phone", ""),
+                    "address": user.get("address", ""),
+                    "avatar_url": user.get("avatar_url", None),
+                }
+                
+                # Store this profile for future use
+                result = await db[collections.PROFILES].insert_one(profile)
+                profile["id"] = str(result.inserted_id)
+                logger.info(f"Created new profile for user: {user_id}")
         
         if not profile:
             # If still no profile, return 404

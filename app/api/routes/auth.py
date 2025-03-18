@@ -37,11 +37,60 @@ router = APIRouter(
     tags=["authentication"],
 )
 
+async def get_user_by_email(email: str):
+    """Find a user by email in any collection."""
+    db = await get_database()
+    
+    # Try owner collection first
+    user = await db[collections.OWNERS].find_one({"email": email})
+    if user:
+        user["user_type"] = "owner"
+        return user
+    
+    # Try sitter collection
+    user = await db[collections.SITTERS].find_one({"email": email})
+    if user:
+        user["user_type"] = "sitter"
+        return user
+    
+    # Fallback to legacy users collection
+    user = await db[collections.USERS].find_one({"email": email})
+    return user
+
+async def get_user_by_id(user_id: str):
+    """Find a user by ID in any collection."""
+    db = await get_database()
+    
+    # Try each collection
+    for collection_name, user_type in [
+        (collections.OWNERS, "owner"),
+        (collections.SITTERS, "sitter"),
+        (collections.USERS, None)  # Legacy
+    ]:
+        # Try to find by id first
+        user = await db[collection_name].find_one({"id": user_id})
+        
+        # Then try by ObjectId
+        if not user:
+            try:
+                user = await db[collection_name].find_one({"_id": ObjectId(user_id)})
+            except Exception:
+                pass
+        
+        if user:
+            # Ensure user_type is set
+            if user_type and "user_type" not in user:
+                user["user_type"] = user_type
+            return user, collection_name
+    
+    return None, None
+
 async def authenticate_user(email: str, password: str):
     """Authenticate user with email and password."""
     db = await get_database()
     logger.info(f"Authenticating user {email} in database {settings.MONGODB_DB_NAME}")
-    user = await db[collections.USERS].find_one({"email": email})
+    
+    user = await get_user_by_email(email)
     
     if not user:
         logger.warning(f"User not found: {email}")
@@ -79,11 +128,18 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     # Create access token
     user_id = str(user.get("id", user.get("_id", "")))
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    # Include user_type in token data
+    token_data = {
+        "sub": user_id,
+        "user_type": user.get("user_type", "owner")
+    }
+    
     access_token = create_access_token(
-        data={"sub": user_id}, expires_delta=access_token_expires
+        data=token_data, expires_delta=access_token_expires
     )
     
-    logger.info(f"Login successful for user: {form_data.username}")
+    logger.info(f"Login successful for user: {form_data.username}, type: {user.get('user_type', 'unknown')}")
     return {"access_token": access_token, "token_type": "bearer"}
 
 # Alternative endpoint for mobile app
@@ -119,6 +175,8 @@ async def get_current_user(request: Request):
             # Decode the token
             payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             user_id = payload.get("sub")
+            user_type = payload.get("user_type", "owner")  # Default to owner
+            
             if not user_id:
                 logger.warning("No user_id in token")
                 raise HTTPException(
@@ -127,16 +185,7 @@ async def get_current_user(request: Request):
                 )
             
             # Get user from database
-            db = await get_database()
-            logger.info(f"Looking up user with ID: {user_id}")
-            
-            # Try to find by id first, then by ObjectId
-            user = await db[collections.USERS].find_one({"id": user_id})
-            if not user:
-                try:
-                    user = await db[collections.USERS].find_one({"_id": ObjectId(user_id)})
-                except Exception as e:
-                    logger.error(f"Error finding user by ObjectId: {str(e)}")
+            user, collection_name = await get_user_by_id(user_id)
             
             if not user:
                 logger.warning(f"User not found: {user_id}")
@@ -154,7 +203,11 @@ async def get_current_user(request: Request):
             if "hashed_password" in user:
                 del user["hashed_password"]
                 
-            logger.info(f"User found: {user.get('email')}")
+            # Ensure user_type is set
+            if "user_type" not in user:
+                user["user_type"] = user_type
+                
+            logger.info(f"User found: {user.get('email')}, type: {user.get('user_type')}")
             return user
                 
         except JWTError as e:
@@ -196,8 +249,8 @@ async def register(user_data: UserCreate):
     
     db = await get_database()
     
-    # Check if user already exists
-    existing_user = await db[collections.USERS].find_one({"email": user_data.email})
+    # Check if user already exists in any collection
+    existing_user = await get_user_by_email(user_data.email)
     if existing_user:
         logger.warning(f"Email already registered: {user_data.email}")
         raise HTTPException(
@@ -217,11 +270,21 @@ async def register(user_data: UserCreate):
     user_dict["created_at"] = datetime.utcnow().isoformat()
     user_dict["is_active"] = True
     
+    # Determine which collection to use based on user_type
+    user_type = user_data.user_type.lower()
+    if user_type == "owner":
+        collection_name = collections.OWNERS
+    elif user_type == "sitter":
+        collection_name = collections.SITTERS
+    else:
+        # Fallback to legacy collection
+        collection_name = collections.USERS
+    
     # Insert user
     try:
-        result = await db[collections.USERS].insert_one(user_dict)
+        result = await db[collection_name].insert_one(user_dict)
         user_id = str(result.inserted_id)
-        logger.info(f"User registered successfully: {user_data.email}, ID: {user_id}")
+        logger.info(f"User registered successfully: {user_data.email}, ID: {user_id}, Collection: {collection_name}")
     except Exception as e:
         logger.error(f"Error inserting user: {str(e)}")
         raise HTTPException(
@@ -229,10 +292,11 @@ async def register(user_data: UserCreate):
             detail=f"Database error: {str(e)}",
         )
     
-    # Create access token
+    # Create access token with user_type
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user_id}, expires_delta=access_token_expires
+        data={"sub": user_id, "user_type": user_type}, 
+        expires_delta=access_token_expires
     )
     
     return {"access_token": access_token, "token_type": "bearer"}

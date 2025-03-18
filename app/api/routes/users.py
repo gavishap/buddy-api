@@ -6,6 +6,7 @@ import logging
 
 from app.core.config import settings, collections
 from app.db.mongodb import get_database
+from app.api.routes.auth import get_user_by_id, get_user_by_email
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -30,6 +31,8 @@ async def get_user_from_token(authorization: str = None):
         # Decode the token
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         user_id = payload.get("sub")
+        user_type = payload.get("user_type", "owner")  # Default to owner
+        
         if user_id is None:
             logger.warning("No subject claim in token")
             raise HTTPException(
@@ -37,22 +40,8 @@ async def get_user_from_token(authorization: str = None):
                 detail="Invalid authentication credentials",
             )
         
-        # Get the user from the database
-        db = await get_database()
-        logger.info(f"Looking up user with ID: {user_id} in database {settings.MONGODB_DB_NAME}")
-        
-        # Try to find by id first
-        user = await db[collections.USERS].find_one({"id": user_id})
-        
-        # If not found, try with ObjectId
-        if not user:
-            try:
-                logger.info(f"User not found by id, trying ObjectId: {user_id}")
-                user = await db[collections.USERS].find_one({"_id": ObjectId(user_id)})
-            except Exception as e:
-                logger.error(f"Error converting to ObjectId: {str(e)}")
-                # If ObjectId conversion fails, just return None
-                pass
+        # Get the user from the database using helper function
+        user, collection_name = await get_user_by_id(user_id)
         
         if not user:
             logger.warning(f"User not found with ID: {user_id}")
@@ -61,12 +50,11 @@ async def get_user_from_token(authorization: str = None):
                 detail="User not found",
             )
             
-        # Convert _id to string if present
-        if "_id" in user:
-            user["id"] = str(user["_id"])
-            del user["_id"]
+        # Ensure user_type is set
+        if "user_type" not in user:
+            user["user_type"] = user_type
         
-        logger.info(f"User found: {user.get('email')}")
+        logger.info(f"User found: {user.get('email')}, type: {user.get('user_type')}")
         return user
         
     except JWTError as e:
@@ -89,7 +77,7 @@ async def get_current_user(request: Request):
                 # Remove sensitive data
                 if "hashed_password" in user:
                     del user["hashed_password"]
-                logger.info(f"Returning user data for: {user.get('email')}")
+                logger.info(f"Returning user data for: {user.get('email')}, type: {user.get('user_type')}")
                 return user
         except Exception as e:
             logger.error(f"Error in get_current_user: {str(e)}")
