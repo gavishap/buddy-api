@@ -1,0 +1,88 @@
+# Python
+__pycache__/
+*/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Environment variables
+.env
+
+# MongoDB data
+mongo_data/
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache/
+.pytest_cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Python cache - explicitly ignoring all pycache directories
+__pycache__/
+*/__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.py.class
+
+# FastAPI specific
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local development specific patterns
+*-312.pyc
+*.pyc
+*_pycache_*
+__pycache__*
+*__pycache*
+*cache*
+pyconvert*
+waggy-api/**/pycache/
+**/venv/**/__pycache__*
+*.cpython-312.pyc
+
+# Local development
+**/*__pycache__
+waggy-api/app/**/__pycache__
+waggy-api/app/__pycache__
+waggy-api/app/*/__pycache__
+waggy-api/app/*/*/__pycache__
+waggy-api/app/*/*/*/__pycache__ 

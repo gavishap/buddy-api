@@ -185,4 +185,67 @@ async def update_sitter_profile_me(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while updating the sitter profile",
-        ) 
+        )
+
+@router.get("/{user_id}", response_model=Profile)
+async def read_user_profile(
+    user_id: str,
+    current_user: dict = Depends(get_current_active_user),
+) -> Any:
+    """
+    Get a user's profile by user ID.
+    """
+    db = await get_database()
+    
+    # Try to find the profile by user_id
+    profile = await db.profiles.find_one({"user_id": user_id})
+    
+    # If not found, try to find by MongoDB ObjectId (for backward compatibility)
+    if not profile:
+        try:
+            profile = await db.profiles.find_one({"_id": ObjectId(user_id)})
+        except Exception:
+            pass
+    
+    if not profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Profile not found",
+        )
+    
+    # Convert _id to id
+    profile["id"] = str(profile.pop("_id"))
+    
+    return profile
+
+@router.get("/auth/{user_id}", response_model=Profile)
+async def read_user_profile_auth_alias(
+    user_id: str,
+    current_user: dict = Depends(get_current_active_user),
+) -> Any:
+    """
+    Alias for /{user_id} to support the mobile app.
+    Get a user's profile by user ID.
+    """
+    db = await get_database()
+    
+    # Try to find the profile by user_id
+    profile = await db.profiles.find_one({"user_id": user_id})
+    
+    # If not found, try to find by MongoDB ObjectId (for backward compatibility)
+    if not profile:
+        try:
+            profile = await db.profiles.find_one({"_id": ObjectId(user_id)})
+        except Exception:
+            pass
+    
+    if not profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Profile not found",
+        )
+    
+    # Convert _id to id
+    profile["id"] = str(profile.pop("_id"))
+    
+    return profile 

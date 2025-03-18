@@ -109,4 +109,14 @@ async def read_users_me(
     """
     Get current user.
     """
+    return current_user
+
+@router.get("/auth/me", response_model=User)
+async def read_users_me_alias(
+    current_user: dict = Depends(get_current_user),
+) -> Any:
+    """
+    Alias for /me to support the mobile app. 
+    Gets current user.
+    """
     return current_user 

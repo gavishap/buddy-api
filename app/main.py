@@ -1,69 +1,77 @@
-from fastapi import FastAPI
+"""Main FastAPI application."""
+import logging
+
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
 from app.api.routes import auth, users, profiles, pets, bookings, sitters
 
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+class AuthHeaderMiddleware(BaseHTTPMiddleware):
+    """Middleware to extract authorization token from header."""
+    
+    async def dispatch(self, request: Request, call_next):
+        """Extract authorization header and add to request state."""
+        authorization = request.headers.get("Authorization")
+        request.state.authorization = authorization
+        response = await call_next(request)
+        return response
+
+
+def get_authorization(request: Request):
+    """Get authorization from request state."""
+    return request.state.authorization
+
+
+# Create FastAPI app
 app = FastAPI(
-    title="Waggy API",
-    description="API for the Waggy Sitters pet sitting application",
-    version="1.0.0",
+    title=settings.PROJECT_NAME,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    docs_url=f"{settings.API_V1_STR}/docs",
+    redoc_url=f"{settings.API_V1_STR}/redoc",
+    debug=settings.DEBUG,
 )
 
-# Set up CORS
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Events
-@app.on_event("startup")
-async def startup_db_client():
-    await connect_to_mongo()
+# Add auth header middleware
+app.add_middleware(AuthHeaderMiddleware)
 
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    await close_mongo_connection()
+# MongoDB startup and shutdown
+app.add_event_handler("startup", connect_to_mongo)
+app.add_event_handler("shutdown", close_mongo_connection)
 
-# Include routers
-app.include_router(
-    auth.router,
-    prefix=f"{settings.API_V1_PREFIX}/auth",
-    tags=["Authentication"],
-)
-app.include_router(
-    users.router,
-    prefix=f"{settings.API_V1_PREFIX}/users",
-    tags=["Users"],
-)
-app.include_router(
-    profiles.router,
-    prefix=f"{settings.API_V1_PREFIX}/profiles",
-    tags=["Profiles"],
-)
-app.include_router(
-    pets.router,
-    prefix=f"{settings.API_V1_PREFIX}/pets",
-    tags=["Pets"],
-)
-app.include_router(
-    bookings.router,
-    prefix=f"{settings.API_V1_PREFIX}/bookings",
-    tags=["Bookings"],
-)
-app.include_router(
-    sitters.router,
-    prefix=f"{settings.API_V1_PREFIX}/sitters",
-    tags=["Sitters"],
-)
+# Include API routers
+app.include_router(auth.router, prefix=settings.API_V1_STR)
+app.include_router(users.router, prefix=settings.API_V1_STR, dependencies=[Depends(get_authorization)])
+app.include_router(profiles.router, prefix=settings.API_V1_STR)
+app.include_router(pets.router, prefix=settings.API_V1_STR)
+app.include_router(bookings.router, prefix=settings.API_V1_STR)
+app.include_router(sitters.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 async def root():
-    return {
-        "message": "Welcome to the Waggy API",
-        "docs": "/docs",
-    } 
+    """Root endpoint."""
+    return {"message": "Welcome to Waggy API"}
+
+@app.get(f"{settings.API_V1_STR}")
+async def api_root():
+    """API root endpoint."""
+    return {"message": "Waggy API v1"} 
