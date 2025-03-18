@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     
     # MongoDB settings
     MONGODB_URL: str = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-    MONGODB_DB_NAME: str = os.getenv("MONGODB_DB_NAME", "waggy")
+    MONGODB_DB_NAME: str = os.getenv("MONGODB_DB_NAME", "waggy_sitters")
     
     # Debug flag
     DEBUG: bool = ENVIRONMENT == "development"

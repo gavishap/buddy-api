@@ -66,6 +66,12 @@ app.include_router(pets.router, prefix=settings.API_V1_STR)
 app.include_router(bookings.router, prefix=settings.API_V1_STR)
 app.include_router(sitters.router, prefix=settings.API_V1_STR)
 
+# Add direct token endpoint for OAuth2
+@app.post(f"{settings.API_V1_STR}/token")
+async def token_endpoint(form_data=Depends(auth.login)):
+    """OAuth2 compatible token endpoint."""
+    return await auth.login(form_data)
+
 @app.get("/")
 async def root():
     """Root endpoint."""
@@ -74,4 +80,4 @@ async def root():
 @app.get(f"{settings.API_V1_STR}")
 async def api_root():
     """API root endpoint."""
-    return {"message": "Waggy API v1"} 
+    return {"message": "Waggy API v1"}

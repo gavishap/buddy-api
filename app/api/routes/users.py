@@ -32,7 +32,7 @@ async def get_user_from_token(authorization: str = None):
             )
         
         # Get the user from the database
-        db = get_database()
+        db = await get_database()
         
         # Try to find by id first
         user = await db[collections.USERS].find_one({"id": user_id})
