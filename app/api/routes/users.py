@@ -2,9 +2,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from jose import jwt, JWTError
 from bson.objectid import ObjectId
+import logging
 
 from app.core.config import settings, collections
 from app.db.mongodb import get_database
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/users",
@@ -14,6 +18,7 @@ router = APIRouter(
 async def get_user_from_token(authorization: str = None):
     """Get user from token."""
     if not authorization or not authorization.startswith("Bearer "):
+        logger.warning("Invalid or missing authorization header")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
@@ -26,6 +31,7 @@ async def get_user_from_token(authorization: str = None):
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         user_id = payload.get("sub")
         if user_id is None:
+            logger.warning("No subject claim in token")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication credentials",
@@ -33,6 +39,7 @@ async def get_user_from_token(authorization: str = None):
         
         # Get the user from the database
         db = await get_database()
+        logger.info(f"Looking up user with ID: {user_id} in database {settings.MONGODB_DB_NAME}")
         
         # Try to find by id first
         user = await db[collections.USERS].find_one({"id": user_id})
@@ -40,12 +47,15 @@ async def get_user_from_token(authorization: str = None):
         # If not found, try with ObjectId
         if not user:
             try:
+                logger.info(f"User not found by id, trying ObjectId: {user_id}")
                 user = await db[collections.USERS].find_one({"_id": ObjectId(user_id)})
-            except:
+            except Exception as e:
+                logger.error(f"Error converting to ObjectId: {str(e)}")
                 # If ObjectId conversion fails, just return None
                 pass
         
         if not user:
+            logger.warning(f"User not found with ID: {user_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found",
@@ -55,10 +65,12 @@ async def get_user_from_token(authorization: str = None):
         if "_id" in user:
             user["id"] = str(user["_id"])
             del user["_id"]
-            
+        
+        logger.info(f"User found: {user.get('email')}")
         return user
         
-    except JWTError:
+    except JWTError as e:
+        logger.error(f"JWT error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
@@ -77,14 +89,16 @@ async def get_current_user(request: Request):
                 # Remove sensitive data
                 if "hashed_password" in user:
                     del user["hashed_password"]
+                logger.info(f"Returning user data for: {user.get('email')}")
                 return user
         except Exception as e:
-            # For development, just return a mock user if there's an error
-            if settings.ENVIRONMENT == "development":
-                print(f"Error in get_current_user: {str(e)}")
+            logger.error(f"Error in get_current_user: {str(e)}")
+            if settings.ENVIRONMENT != "development":
+                raise
     
     # For development, fallback to mock data
     if settings.ENVIRONMENT == "development":
+        logger.warning("Returning mock user data as fallback")
         return {
             "id": "mock_user_id",
             "email": "user@example.com",
@@ -99,12 +113,45 @@ async def get_current_user(request: Request):
 @router.get("/{user_id}")
 async def get_user(user_id: str):
     """Get user by ID."""
-    # For now, just return a mock user
-    return {
-        "id": user_id,
-        "email": "user@example.com",
-        "user_type": "owner",
-    }
+    db = await get_database()
+    
+    try:
+        # First try to find by id
+        user = await db[collections.USERS].find_one({"id": user_id})
+        
+        # If not found, try with ObjectId
+        if not user:
+            try:
+                user = await db[collections.USERS].find_one({"_id": ObjectId(user_id)})
+            except:
+                # If ObjectId conversion fails, return 404
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found",
+                )
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        
+        # Convert _id to string if present
+        if "_id" in user:
+            user["id"] = str(user["_id"])
+            del user["_id"]
+            
+        # Remove sensitive data
+        if "hashed_password" in user:
+            del user["hashed_password"]
+            
+        return user
+    except Exception as e:
+        logger.error(f"Error retrieving user {user_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving user",
+        )
 
 @router.put("/me")
 async def update_user():

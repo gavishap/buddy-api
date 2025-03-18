@@ -1,5 +1,5 @@
 """Authentication routes."""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 import uuid
@@ -8,6 +8,8 @@ from passlib.context import CryptContext
 from jose import jwt
 from typing import Optional
 import logging
+from bson import ObjectId
+from jose.exceptions import JWTError
 
 from app.core.config import settings, collections
 from app.db.mongodb import get_database
@@ -97,20 +99,94 @@ async def login_auth_login(form_data: OAuth2PasswordRequestForm = Depends()):
     return await login(form_data)
 
 @router.get("/me")
-async def get_current_user():
+async def get_current_user(request: Request):
     """Get current user info."""
-    # For now, just return a mock user
-    return {
-        "id": "mock_user_id",
-        "email": "user@example.com",
-        "user_type": "owner",
-    }
+    # Get the authorization from request state
+    authorization = request.state.authorization
+    
+    if authorization:
+        try:
+            # Extract token from Authorization header
+            if not authorization.startswith("Bearer "):
+                logger.warning("Invalid authorization header format")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication credentials",
+                )
+            
+            token = authorization.replace("Bearer ", "")
+            
+            # Decode the token
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            user_id = payload.get("sub")
+            if not user_id:
+                logger.warning("No user_id in token")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED, 
+                    detail="Invalid token"
+                )
+            
+            # Get user from database
+            db = await get_database()
+            logger.info(f"Looking up user with ID: {user_id}")
+            
+            # Try to find by id first, then by ObjectId
+            user = await db[collections.USERS].find_one({"id": user_id})
+            if not user:
+                try:
+                    user = await db[collections.USERS].find_one({"_id": ObjectId(user_id)})
+                except Exception as e:
+                    logger.error(f"Error finding user by ObjectId: {str(e)}")
+            
+            if not user:
+                logger.warning(f"User not found: {user_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found",
+                )
+            
+            # Convert _id to string if present
+            if "_id" in user:
+                user["id"] = str(user["_id"])
+                del user["_id"]
+            
+            # Remove sensitive data
+            if "hashed_password" in user:
+                del user["hashed_password"]
+                
+            logger.info(f"User found: {user.get('email')}")
+            return user
+                
+        except JWTError as e:
+            logger.error(f"JWT decode error: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+            )
+        except Exception as e:
+            logger.error(f"Error in get_current_user: {str(e)}")
+            if settings.ENVIRONMENT != "development":
+                raise
+    
+    # For development, fallback to mock data
+    if settings.ENVIRONMENT == "development":
+        logger.warning("Returning mock user data as fallback")
+        return {
+            "id": "mock_user_id",
+            "email": "user@example.com",
+            "user_type": "owner",
+        }
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        )
 
 # Duplicate route to match the pattern the mobile app is using
 @router.get("/auth/me")
-async def get_current_user_auth_auth():
+async def get_current_user_auth_auth(request: Request):
     """Duplicate get current user endpoint for compatibility."""
-    return await get_current_user()
+    return await get_current_user(request)
 
 @router.post("/register", response_model=Token)
 async def register(user_data: UserCreate):
