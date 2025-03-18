@@ -270,15 +270,23 @@ async def register(user_data: UserCreate):
     user_dict["created_at"] = datetime.utcnow().isoformat()
     user_dict["is_active"] = True
     
-    # Determine which collection to use based on user_type
+    # Add empty fields for profile data
+    user_dict.setdefault("bio", "")
+    user_dict.setdefault("phone", "")
+    user_dict.setdefault("address", "")
+    user_dict.setdefault("avatar_url", None)
+    
+    # Always use the correct collection based on user_type
     user_type = user_data.user_type.lower()
     if user_type == "owner":
         collection_name = collections.OWNERS
     elif user_type == "sitter":
         collection_name = collections.SITTERS
     else:
-        # Fallback to legacy collection
-        collection_name = collections.USERS
+        # Default to owner if type is invalid
+        collection_name = collections.OWNERS
+        user_type = "owner"
+        user_dict["user_type"] = user_type
     
     # Insert user
     try:

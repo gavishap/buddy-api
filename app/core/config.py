@@ -8,12 +8,10 @@ from pydantic_settings import BaseSettings
 class Collections:
     """Database collections."""
     USERS = "users"  # Legacy collection - will be deprecated
-    OWNERS = "owners"  # New collection for owner users
-    SITTERS = "sitter_users"  # New collection for sitter users (different from sitter profiles)
-    PROFILES = "profiles"
+    OWNERS = "owners"  # Collection for owner users (contains both auth and profile data)
+    SITTERS = "sitter_users"  # Collection for sitter users (contains both auth and profile data)
     PETS = "pets"
     BOOKINGS = "bookings"
-    SITTERS = "sitters"  # Sitter profiles/listings
 
 
 collections = Collections()
